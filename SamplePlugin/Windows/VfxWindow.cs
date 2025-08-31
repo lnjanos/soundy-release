@@ -1,26 +1,27 @@
-using System;
-using System.IO;
-using System.Numerics;
-using System.Threading.Tasks;
+using Dalamud.Bindings.ImGui;
+using Dalamud.Interface;
 using Dalamud.Interface.Utility;
 using Dalamud.Interface.Windowing;
-using Dalamud.Bindings.ImGui;
+using ECommons;
 using ECommons.DalamudServices;
+using ECommons.ImGuiMethods;
+using Lumina.Excel.Sheets;
 using Soundy.FileAnalyzer;
 using Soundy.Pap;
-using System.Collections.Generic;
-using System.Linq;
 using Soundy.Scd;
-using Dalamud.Interface;
-using static Soundy.Pap.PapManager;
+using Soundy.Vfx;
+using System;
+using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
-using System.Formats.Tar;
-using ECommons;
-using Lumina.Excel.Sheets;
-using static FFXIVClientStructs.FFXIV.Client.UI.Misc.GroupPoseModule;
 using System.Diagnostics.Metrics;
-using ECommons.ImGuiMethods;
+using System.Formats.Tar;
+using System.IO;
+using System.Linq;
+using System.Numerics;
 using System.Text.RegularExpressions;
+using System.Threading.Tasks;
+using static FFXIVClientStructs.FFXIV.Client.UI.Misc.GroupPoseModule;
+using static Soundy.Vfx.VfxManager;
 
 namespace Soundy.Windows
 {
@@ -55,17 +56,17 @@ namespace Soundy.Windows
         // NEU: PAP-Auswahl
         // -----------------------------
         /// <summary>Die intern gescannte Liste aller gefundenen PAPs, inkl. extrahierter SCD-Details.</summary>
-        private List<GroupedPapEntry> papEntries = new();
+        private List<GroupedPap2Entry> papEntries = new();
         /// <summary>Wurde die PAP-Liste schon einmal geladen?</summary>
         private bool papListLoaded = false;
         /// <summary>Filtertext fürs UI.</summary>
         private string papFilter = "";
         /// <summary>Die vom User selektierten PAP-Einträge.</summary>
-        private List<GroupedPapEntry> userSelectedPapEntries = new();
+        private List<GroupedPap2Entry> userSelectedPapEntries = new();
 
         // Tracking ongoing tasks
         private Task? currentDownloadTask;
-        private Task<List<GroupedPapEntry>>? papScanTask;
+        private Task<List<GroupedPap2Entry>>? papScanTask;
         private Task<List<string>>? playlistLoadTask;
 
         private bool showPapHelp = false;
@@ -229,7 +230,7 @@ namespace Soundy.Windows
 
                 if (papScanTask == null)
                 {
-                    papScanTask = PapManager.ScanForPapDetailsGroupedAsync(dirPath, msg => processState = msg);
+                    papScanTask = VfxManager.ScanForPap2DetailsGroupedAsync(dirPath, msg => processState = msg);
                 }
 
                 if (!papScanTask.IsCompleted)
@@ -245,7 +246,7 @@ namespace Soundy.Windows
                 catch (Exception ex)
                 {
                     processState = $"error in pap scan: {ex}";
-                    papEntries = new List<GroupedPapEntry>();
+                    papEntries = new List<GroupedPap2Entry>();
                 }
 
                 papScanTask = null;
@@ -306,7 +307,7 @@ namespace Soundy.Windows
                     // Spalte 1: Checkbox
                     ImGui.TableSetColumnIndex(0);
                     bool sel = entry.Selected;
-                    if (ImGui.Checkbox($"##chk_{entry.PapPath}", ref sel))
+                    if (ImGui.Checkbox($"##chk_{entry.Pap2Path}", ref sel))
                     {
                         entry.Selected = sel;
                     }
@@ -333,13 +334,13 @@ namespace Soundy.Windows
 
                     // Spalte 5: Details-Button (öffnet Popup)
                     ImGui.TableSetColumnIndex(3);
-                    if (ImGui.Button($"Details##btn_{entry.PapPath}"))
+                    if (ImGui.Button($"Details##btn_{entry.Pap2Path}"))
                     {
-                        ImGui.OpenPopup($"popup_{entry.PapPath}");
+                        ImGui.OpenPopup($"popup_{entry.Pap2Path}");
                     }
-                    if (ImGui.BeginPopup($"popup_{entry.PapPath}"))
+                    if (ImGui.BeginPopup($"popup_{entry.Pap2Path}"))
                     {
-                        ImGui.Text($"References for:\n{entry.PapPath}");
+                        ImGui.Text($"References for:\n{entry.Pap2Path}");
                         ImGui.Separator();
                         foreach (var r in entry.References)
                         {
@@ -528,12 +529,12 @@ namespace Soundy.Windows
             }
         }
 
-        private List<GroupedPapEntry> FilterPapEntries(List<GroupedPapEntry> source, string filter)
+        private List<GroupedPap2Entry> FilterPapEntries(List<GroupedPap2Entry> source, string filter)
         {
             if (string.IsNullOrEmpty(filter)) return source;
             var low = filter.ToLowerInvariant();
-            return source.Where(e =>
-                e.PapPath.ToLowerInvariant().Contains(low) ||
+            return source.Where( e =>
+                e.Pap2Path.ToLowerInvariant().Contains(low) ||
                 e.References.Any(r =>
                     r.OptionName.ToLowerInvariant().Contains(low) ||
                     r.JsonFile.ToLowerInvariant().Contains(low)) ||
@@ -725,44 +726,16 @@ namespace Soundy.Windows
                 {
                     count++;
                     // Erstelle einen absoluten Pfad für die PAP-Datei
-                    string currentPapPath = Path.Combine(dirPath, papEntry.PapPath);
+                    string currentPapPath = Path.Combine(dirPath, papEntry.Pap2Path);
                     if (!File.Exists(currentPapPath))
                     {
                         Plugin.Log.Warning($"PAP not found: {currentPapPath}");
                         continue;
                     }
-                    string newPap = Path.Combine("soundy", "paps", $"injected_{Path.GetFileName(papEntry.PapPath)}");
+                    string newPap = Path.Combine("soundy", "paps", $"injected_{Path.GetFileName(papEntry.Pap2Path)}");
                     string newPapPath = Path.Combine(dirPath, newPap);
-                    if (papEntry.ScdDetails.Count < 1)
+                    if (papEntry.ScdDetails.Count >= 1)
                     {
-                        // Überschreibe den vorhandenen SCD in der PAP
-                        // Hier rufen wir PapInjector.InjectSound auf – in diesem Beispiel nehmen wir an,
-                        // dass das Überschreiben im selben File (currentPapPath) erfolgt.
-                        string customRoute = $"soundy/sounds/{rand}_{rand2}.scd";
-
-                        try
-                        {
-                            await Svc.Framework.RunOnTick(() =>
-                            {
-                                PapInjector.InjectSound(customRoute, currentPapPath, newPapPath);
-                            });
-                        }
-                        catch (Exception ex)
-                        {
-                            currentStep = -1;
-                            processState = $"Error in Injecting: {ex.Message}";
-                            return;
-                        }
-
-                        replacements.Add(papEntry.PapPath, newPap);
-
-                        finalSCDPaths.Add(customRoute);
-                    }
-                    else
-                    {
-                        // Es gibt keinen SCD in der PAP – injiziere den neuen Sound.
-                        // Bestimme einen neuen Pfad für die aktualisierte PAP (z.B. in "soundy/paps")
-                        //PapInjector.InjectSound(scdPath, currentPapPath, newPapPath);
                         foreach (var scd in papEntry.ScdDetails)
                         {
                             finalSCDPaths.Add(scd.SCDPath);

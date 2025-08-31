@@ -28,7 +28,7 @@ namespace Soundy
 
         public Configuration Configuration { get; init; }
 
-        private readonly WindowSystem windowSystem = new("Soundy for Yue's DJ");
+        private readonly WindowSystem windowSystem = new("Soundy");
 
         private ConfigWindow configWindow;
         private MainWindow mainWindow;
@@ -65,6 +65,10 @@ namespace Soundy
             CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
             {
                 HelpMessage = "Open Soundy's main window."
+            });
+            CommandManager.AddHandler("/soundy vfx", new CommandInfo(OnCommand)
+            {
+                HelpMessage = "Open Soundy's window for VFX processing."
             });
 
 
